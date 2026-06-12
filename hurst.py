@@ -1,14 +1,8 @@
 import numpy as np
-from warehouse import load_from_db
 
 
-def compute_hurst(symbol: str):
-    df = load_from_db(symbol)
-
-    if df is None or len(df) < 100:
-        return None
-
-    returns = df["close"].pct_change().dropna().values
+def compute_hurst(returns):
+    """Full-sample Hurst (keep your existing one)"""
 
     if len(returns) < 100:
         return None
@@ -18,58 +12,66 @@ def compute_hurst(symbol: str):
     rs_values = []
     valid_windows = []
 
-    for window in window_sizes:
-
-        if window >= len(returns):
+    for w in window_sizes:
+        if w >= len(returns):
             continue
 
-        n_segments = len(returns) // window
+        chunks = len(returns) // w
+        vals = []
 
-        rs_segment_values = []
+        for i in range(chunks):
+            segment = returns[i*w:(i+1)*w]
 
-        for i in range(n_segments):
-            segment = returns[i * window:(i + 1) * window]
+            if len(segment) < 2:
+                continue
 
             mean = np.mean(segment)
+            dev = segment - mean
+            cumsum = np.cumsum(dev)
 
-            deviations = segment - mean
-            cumulative = np.cumsum(deviations)
-
-            R = np.max(cumulative) - np.min(cumulative)
+            R = np.max(cumsum) - np.min(cumsum)
             S = np.std(segment)
 
             if S > 0:
-                rs_segment_values.append(R / S)
+                vals.append(R / S)
 
-        if rs_segment_values:
-            rs_values.append(np.mean(rs_segment_values))
-            valid_windows.append(window)
+        if vals:
+            rs_values.append(np.mean(vals))
+            valid_windows.append(w)
 
     if len(rs_values) < 2:
         return None
 
-    hurst, _ = np.polyfit(
-        np.log(valid_windows),
-        np.log(rs_values),
-        1
-    )
+    hurst, _ = np.polyfit(np.log(valid_windows), np.log(rs_values), 1)
 
-    if hurst < 0.40:
-        interpretation = "Strong mean reversion"
+    return hurst
 
-    elif hurst < 0.45:
-        interpretation = "Moderate mean reversion"
 
-    elif hurst < 0.55:
-        interpretation = "Random walk / no clear edge"
+# ---------------------------------------------------
+# 🔥 NEW: Rolling Hurst
+# ---------------------------------------------------
 
-    elif hurst < 0.60:
-        interpretation = "Mild trend persistence"
+def compute_rolling_hurst(returns, window=256, step=100):
+    """
+    Returns time series of Hurst values.
+    window = lookback size
+    step = how often we recalc
+    """
 
-    else:
-        interpretation = "Strong trend persistence"
+    if len(returns) < window:
+        return None
 
-    return {
-        "hurst": hurst,
-        "interpretation": interpretation
-    }
+    hursts = []
+
+    for i in range(0, len(returns) - window, step):
+        segment = returns[i:i + window]
+
+        h = compute_hurst(segment)
+
+        if h is not None:
+            hursts.append(h)
+
+    if len(hursts) < 2:
+        return None
+    print("Size of Hursts Array: ", len(hursts))
+    return np.array(hursts)
