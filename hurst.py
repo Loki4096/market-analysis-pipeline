@@ -2,22 +2,22 @@ import numpy as np
 
 
 def compute_hurst(returns):
-    """Full-sample Hurst (keep your existing one)"""
-
+    """
+    Full-sample Hurst via Rescaled Range (R/S) analysis.
+    Returns None if insufficient data or estimation fails.
+    """
     if len(returns) < 100:
         return None
 
-    window_sizes = [16, 32, 64, 128, 256]
+    # only use window sizes smaller than the series length
+    window_sizes = [w for w in [16, 32, 64, 128, 256] if w < len(returns)]
 
-    rs_values = []
+    rs_values    = []
     valid_windows = []
 
     for w in window_sizes:
-        if w >= len(returns):
-            continue
-
         chunks = len(returns) // w
-        vals = []
+        vals   = []
 
         for i in range(chunks):
             segment = returns[i*w:(i+1)*w]
@@ -25,12 +25,12 @@ def compute_hurst(returns):
             if len(segment) < 2:
                 continue
 
-            mean = np.mean(segment)
-            dev = segment - mean
+            mean   = np.mean(segment)
+            dev    = segment - mean
             cumsum = np.cumsum(dev)
 
             R = np.max(cumsum) - np.min(cumsum)
-            S = np.std(segment)
+            S = np.std(segment, ddof=1)   # ddof=1: unbiased std
 
             if S > 0:
                 vals.append(R / S)
@@ -42,21 +42,31 @@ def compute_hurst(returns):
     if len(rs_values) < 2:
         return None
 
-    hurst, _ = np.polyfit(np.log(valid_windows), np.log(rs_values), 1)
+    try:
+        hurst, _ = np.polyfit(np.log(valid_windows), np.log(rs_values), 1)
+    except (np.linalg.LinAlgError, ValueError):
+        return None
+
+    # sanity clamp: Hurst must be in (0, 1) — discard garbage fits
+    if not (0.0 < hurst < 1.0):
+        return None
 
     return hurst
 
 
-# ---------------------------------------------------
-# 🔥 NEW: Rolling Hurst
-# ---------------------------------------------------
+def compute_rolling_hurst(returns, window=256, step=10):
+    """
+    Rolling Hurst exponent over a sliding window.
 
-def compute_rolling_hurst(returns, window=256, step=100):
+    Args:
+        returns : array-like of log returns
+        window  : lookback size per Hurst calculation
+        step    : how many candles to advance between calculations
+
+    Returns:
+        np.array of Hurst values, or None if insufficient data
     """
-    Returns time series of Hurst values.
-    window = lookback size
-    step = how often we recalc
-    """
+    returns = np.asarray(returns)   # ensure numpy array, not pandas Series
 
     if len(returns) < window:
         return None
@@ -65,13 +75,11 @@ def compute_rolling_hurst(returns, window=256, step=100):
 
     for i in range(0, len(returns) - window, step):
         segment = returns[i:i + window]
-
         h = compute_hurst(segment)
-
         if h is not None:
             hursts.append(h)
 
     if len(hursts) < 2:
         return None
-    print("Size of Hursts Array: ", len(hursts))
+
     return np.array(hursts)
